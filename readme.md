@@ -57,7 +57,7 @@ Please see the following implementations for additional examples and test vector
 ## Feedback & Reviews
 
 - [OP_EVAL CHIP Issues](https://github.com/bitjson/bch-eval/issues)
-- [`CHIP 2024-12 OP_EVAL` - Bitcoin Cash Research](https://bitcoincashresearch.org/t/) // TODO
+- [`CHIP 2024-12 OP_EVAL: Function Evaluation` - Bitcoin Cash Research](https://bitcoincashresearch.org/t/chip-2024-12-op-eval-function-evaluation/1450)
 
 ## Changelog
 
