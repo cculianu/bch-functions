@@ -7,34 +7,106 @@ This section documents design decisions made in this specification.
 <summary><strong>Table of Contents</strong></summary>
 
 - [Rationale](#rationale)
+  - [Immutability of Function Bodies](#immutability-of-function-bodies)
+  - [Deferred Parsing of Function Bodies](#deferred-parsing-of-function-bodies)
+  - [Use of Stack-Based Parameters](#use-of-stack-based-parameters)
+  - [Use of Positive Integer-Based Function Identifiers](#use-of-positive-integer-based-function-identifiers)
+  - [Support for Skipping Function Identifiers](#support-for-skipping-function-identifiers)
+  - [Opcode Naming: `OP_DEFINE` and `OP_INVOKE`](#opcode-naming-op_define-and-op_invoke)
   - [Preservation of Alternate Stack](#preservation-of-alternate-stack)
   - [Preservation of `OP_CODESEPARATOR` Support](#preservation-of-op_codeseparator-support)
   - [Non-Impact on Performance or Static Analysis](#non-impact-on-performance-or-static-analysis)
-    - [Estimation of Contract Validation Performance](#estimation-of-contract-validation-performance)
+    - [Estimation of Contract Validation Cost](#estimation-of-contract-validation-cost)
 
 </details>
 
+## Immutability of Function Bodies
+
+This proposal enforces the immutability of function bodies after definition – attempting to redefine a function identifier during evaluation triggers immediate validation failure. Immutable function bodies simplify contract security analysis and tooling, eliminating some potential contract bugs and malicious code path obfuscation techniques.
+
+Alternatively, this proposal could allow dynamic redefinition of function identifiers, offering additional flexibility to contract authors. In this alternative, contracts with more than 17 defined functions (identifiable with `OP_0` through `OP_16`) could potentially be optimized to save an additional byte per invocation in some circumstances (e.g the 18th-most-used function is used more frequently, after some point in the computation, than one of the 17 functions occupying single-byte identifiers, such that swapping them saves bytes in the final encoded contract).
+
+However, note that this optimization saves only 1 byte per _encoded_ `OP_INVOKE` reference (e.g. secondary invocations within loops already account for zero bytes in the encoded contract), so such optimizations seem unlikely to result in meaningful efficiency gains for the vast majority of contracts (while requiring non-trivial implementation logic in contract compilers).
+
+Additionally, in the mutable alternative, function definitions could also be more generally used as off-stack "variables". `OP_DEFINE` could behave as an inefficient "`OP_STORE`" (an "`OP_DEFINE`d variable" would require prefixing and concatenation with a correct push instruction), while `OP_INVOKE` would be essentially equivalent to "`OP_FETCH`". (Note that contract development tooling can also be designed to enforce discipline on usage of mutation – compilers could reasonably disallow mutation of function definitions while allowing a specific, easily auditable "variable reference" style of usage.)
+
+However, this approach would produce significantly less optimal contract lengths than existing compilers: even without [well-optimized stack scheduling](https://users.ece.cmu.edu/~koopman/stack_compiler/index.html), naive stack-based data management techniques (e.g. deep `OP_PICK`s and `OP_ROLL`s) are generally much more byte-efficient than the 4+ bytes of overhead required to set such "variables" via `OP_DEFINE`.
+
+Given the safety advantages of immutable function bodies, coupled with the impracticality and inconsequentiality of potential optimizations made possible by mutability, this proposal deems immutable function bodies to be most prudent.
+
+## Deferred Parsing of Function Bodies
+
+This proposal minimizes validation costs and consensus risks by only parsing function bodies when invoked by a matching `OP_INVOKE`.
+
+By avoiding any inspection or attempted "pre-parsing" of the function body, the computational cost of `OP_DEFINE` is minimized, particularly for unused functions (i.e. the contract evaluation takes a code path in which the function is never invoked). This behavior ensures that `OP_DEFINE` has a vey low, predictable cost, allowing greater usage by contract authors and minimizing the risk of implementation-specific consensus or denial-of-service vulnerabilities arising from faulty pre-parsing logic.
+
+Alternatively, an "eager parsing" implementation would require all virtual machine (VM) implementations to separate instruction parsing from instruction evaluation such that the parsing step may be performed during `OP_DEFINE`. In addition to wasting parsing work for unused functions, this alternative would push performance-sensitive VM implementations toward more complex implementations of `OP_INVOKE` (or even the top-level "evaluation loop") in an attempt to re-use the parsing work performed during `OP_DEFINE`, with the increased complexity cascading across other VM behaviors (esp. signature checking and bytecode introspection operations).
+
+Finally, note that by design, `OP_DEFINE` cannot fail due to the contents of a function body – empty (zero-length) or malformed (incomplete trailing push instruction) function bodies; this minimizes edge cases, allowing contracts to omit or defer case-specific logic, potentially reducing the operation cost of branch tables, precomputation tables, and similar constructions.
+
+## Use of Stack-Based Parameters
+
+This proposal's `OP_DEFINE` and `OP_INVOKE` operations adopt the existing pattern of all other non-push operations – and the defined functions themselves – by accepting parameters from the stack. This approach maximizes the power and flexibility of each operation, simplifies transpilation from other languages to Bitcoin Cash VM bytecode, reduces contract lengths, and avoids a breaking modifications to bytecode parsing (which would require wider ecosystem software modifications beyond VM implementations).
+
+For comparison, consider an alternative approach using multi-byte `OP_DEFINE` and `OP_INVOKE` opcodes, where each codepoint would require a new, specialized parsing behavior (similar to the modified parsing of push operations). In this alternative, upon encountering an `OP_DEFINE`, the parser might be expected to read a `CompactUint` (function identifier) followed by a standard push instruction containing the function body; for `OP_INVOKE`, the parser would read only the trailing function identifier.
+
+This multi-byte alternative would allow savings of 1 byte per definition and invocation of the 18th through 127th defined function (where this proposal must switch to `OP_PUSHBYTES_1` from `OP_0`-`OP_16`), 2 bytes per definition and invocation of the 128th through 253rd defined function (where this proposal must switch to `OP_PUSHBYTES_2`), etc.
+
+However, by preventing function definition and/or invocation from accepting data from the stack (i.e. directly using the results of previous computation), this alternative would complicate or prevent transpilation of complex computations from other languages (where no such limitations are imposed) to Bitcoin Cash VM bytecode. Instead, many branch table, precomputation table, and similar operation cost-reducing constructions would need to be "unrolled" into expensive conditional blocks (e.g. `OP_DUP <case> OP_EQUAL OP_IF...OP_ENDIF OP_DUP <case> ... OP_EQUAL`), wasting operation cost and significantly lengthening contracts.
+
+Finally, the multi-byte alternative would break compatibility of non-executed bytecode parsing across all existing and historical software, requiring updates to many development libraries and tools (including Bitcoin Cash-specific and multi-network projects) beyond simple updates to opcode names (whereas for this proposal, such projects would merely misreport the new opcode names as `OP_RESERVED1` and `OP_RESERVED2`).
+
+Given the advantages of the standard, stack-based approach – and the significant disadvantages of a parser-modifying approach – this proposal considers a stack-based approach to be most prudent.
+
+## Use of Positive Integer-Based Function Identifiers
+
+This proposal requires that function identifiers be positive integers within a range bounded by the [Maximum Cumulative Depth (`MAX_CUMULATIVE_DEPTH`)](./readme.md#maximum-cumulative-depth-max_cumulative_depth) VM limit (`0` to `999` inclusive, currently).
+
+Integer-based function identifiers are particularly appropriate given the existing design of the VM: specialized, number pushing opcodes occupy 18 codepoints in the instruction set (`OP_1NEGATE` and `OP_0` to `OP_16`), enabling up to 18 unique function identifiers to be encoded using a single byte.
+
+To minimize the risk of off-by-one errors in ecosystem software, this proposal does not attempt to offset function table indexes (or otherwise incorporate support) for a function defined at `-1`. While this prevents a potential 1-byte optimization per encoded invocation in each contract's 18th-most-encoded function, this proposal considers protocol and ecosystem software simplicity to outweigh such a potential optimization.
+
+Outperforming this proposal's approach (in terms of byte-efficiency per encoded invocation) would require reserving a range of user-definable `OP_INVOKE0` to `OP_INVOKE16` (saving 1 byte per invocation). However, function definitions beyond that range would again require use of a generic `OP_INVOKE` (or generic multi-byte opcode range to specify through e.g. `OP_INVOKE999`). As single-byte codepoints are very limited, this proposal considers the two-codepoint `OP_DEFINE`/`OP_INVOKE` approach to be most prudent.
+
+## Support for Skipping Function Identifiers
+
+This proposal allows functions to be `OP_DEFINE`d in any order, simplifying contract development, maximizing contract safety, and minimizing contract lengths.
+
+An alternative approach which e.g. requires each successive definition to occupy the next index in the [Function Table](./readme.md#function-table) would make contracts more brittle: minor changes to a contract could require re-indexing of many functions, complicating development and/or requiring additional development and audit tooling.
+
+## Opcode Naming: `OP_DEFINE` and `OP_INVOKE`
+
+While opcode names are not standardized by consensus (and conflicting names are already used in practice by ecosystem software), it's common for implementers to adopt the naming conventions recommended by CHIPs. This proposal recommends the names `OP_DEFINE` an `OP_INVOKE`.
+
+For `OP_DEFINE`, potential options also include `OP_DECLARE`, `OP_FUNCTION`, `OP_WORD`, `OP_CONSTANT`, or partial words and concatenations like `OP_DEF`, `OP_DEFFUN`, `OP_DEFFUNC`, `OP_DEFWORD`, `OP_DEFINEFUNCTION`, `OP_DEFSUBROUTINE`, `OP_CONST`, etc.
+
+This proposal selects `OP_DEFINE` to 1) avoid forcing development tooling adherence to the "function" terminology (this proposal uses "function" for wider accessibility, but Forth dialects typically use the term "word"), 2) maximize clarity (an "`OP_DECLARE`" could plausibly leave definition of the function body to another operation) and 3) minimize typographical mistakes (e.g. "define" is likely to be found in spell checking dictionaries).
+
+For `OP_INVOKE`, potential options also include `OP_CALL`, `OP_RUN`, `OP_EXECUTE`, `OP_INTERPRET`, `OP_EVALUATE`, `OP_METHOD`, `OP_SUBROUTINE` or partial words and concatenations like `OP_CALLFUNC`, `OP_RUNFUNC`, `OP_EXEC`, `OP_EVAL`, etc.
+
+This proposal selects `OP_INVOKE` to 1) minimize ambiguity in a variety of contexts ("call" and "run" are more common terms in many environments, with common uses unrelated to function invocation), 2) minimize ambiguity vs. similar concepts in other Forth dialects ("CALL", "INTERPRET", and "EXECUTE" might imply subtle differences which are not applicable to the Bitcoin Cash VM's combined parse-then-execute approach), and 3) minimize typographical mistakes (e.g. "invoke" is likely to be found in spell checking dictionaries).
+
 ## Preservation of Alternate Stack
 
-Though not specified, the BIP12 implementation also [cleared the alternate stack](https://github.com/bitcoin/bitcoin/issues/729#issuecomment-3294453) at the end of each evaluation. At best, this behavior is useless: because each alternate stack item requires one byte to push (via `OP_TOALTSTACK`), any program which employed the stack clearing behavior could just as easily have replaced those bytes with equally or more efficient dropping operations (`OP_DROP`, `OP_2DROP`, or wider [stack clearing](https://github.com/bitjson/bch-vm-limits/blob/master/rationale.md#increased-usability-of-multisig-stack-clearing)). Further, preventing functions from accepting or returning values in the alternate stack would limit their byte efficiency by requiring less efficient stack juggling strategies vs. the higher semantic bandwidth of passing both stacks.
+Though not specified, the BIP12 `OP_EVAL` implementation [cleared the alternate stack](https://github.com/bitcoin/bitcoin/issues/729#issuecomment-3294453) at the end of each evaluation. At best, this behavior is useless: because each alternate stack item requires one byte to push (via `OP_TOALTSTACK`), any program which employed the stack clearing behavior could just as easily have replaced those bytes with equally or more efficient dropping operations (`OP_DROP`, `OP_2DROP`, or wider [stack clearing](https://github.com/bitjson/bch-vm-limits/blob/master/rationale.md#increased-usability-of-multisig-stack-clearing)). Further, preventing functions from accepting or returning values in the alternate stack would limit their byte efficiency by requiring less efficient stack juggling strategies vs. the higher semantic bandwidth of passing both stacks.
 
 ## Preservation of `OP_CODESEPARATOR` Support
 
-BIP12 required implementations to specifically scan each evaluated script for instances of `OP_CODESEPARATOR`, rejecting the transaction if found. This needlessly increases implementation complexity and eliminates some potential value: [`OP_CODESEPARATOR` remains a useful feature](https://github.com/bitjson/bch-vm-limits/blob/master/rationale.md#ongoing-value-of-op_codeseparator-operation) for certain use cases and has been preserved by past upgrades (e.g. [`OP_ACTIVEBYTECODE`'s support for `OP_CODESEPARATOR`](https://github.com/bitjson/bch-2022/blob/master/CHIP-2021-02-Add-Native-Introspection-Opcodes.md#op_activebytecode-support-for-op_codeseparator)). This proposal avoids the additional implementation complexity and preserves the usefulness of `OP_CODESEPARATOR` within evaluations.
+BIP12 `OP_EVAL` required implementations to specifically scan each evaluated script for instances of `OP_CODESEPARATOR`, rejecting the transaction if found. This needlessly increases implementation complexity and eliminates some potential value: [`OP_CODESEPARATOR` remains a useful feature](https://github.com/bitjson/bch-vm-limits/blob/master/rationale.md#ongoing-value-of-op_codeseparator-operation) for certain use cases and has been preserved by past upgrades (e.g. [`OP_ACTIVEBYTECODE`'s support for `OP_CODESEPARATOR`](https://github.com/bitjson/bch-2022/blob/master/CHIP-2021-02-Add-Native-Introspection-Opcodes.md#op_activebytecode-support-for-op_codeseparator)). This proposal avoids the additional implementation complexity and preserves the usefulness of `OP_CODESEPARATOR` within evaluations. See: [Should `OP_ACTIVEBYTECODE` encode the whole “call stack”?](https://bitcoincashresearch.org/t/chip-2024-12-op-eval-function-evaluation/1450/52#should-op_activebytecode-encode-the-whole-call-stack-6)
 
 ## Non-Impact on Performance or Static Analysis
 
-The 2011 [BIP12 `OP_EVAL` proposal](https://github.com/bitcoin/bips/blob/master/bip-0012.mediawiki) was ultimately [abandoned](https://web.archive.org/web/20140420092207/https://bitcointalk.org/index.php?topic=46538.0;all#msg2256663) in favor of [BIP16 Pay to Script Hash (P2SH)](https://github.com/bitcoin/bips/blob/master/bip-0016.mediawiki) due to uncertainty about `OP_EVAL`'s impact on the safety, validation performance, and static analyzability of Bitcoin Cash Virtual Machine (VM) bytecode<sup>1</sup>.
+The 2011 [BIP12 `OP_EVAL` proposal](https://github.com/bitcoin/bips/blob/master/bip-0012.mediawiki) was ultimately [abandoned](https://web.archive.org/web/20140420092207/https://bitcointalk.org/index.php?topic=46538.0;all#msg2256663) in favor of [BIP16 Pay to Script Hash (P2SH)](https://github.com/bitcoin/bips/blob/master/bip-0016.mediawiki) due to uncertainty about `OP_EVAL`'s impact on the safety, validation performance, and "static analyzability" of Bitcoin Cash Virtual Machine (VM) bytecode<sup>1</sup>.
 
 While some of these uncertainties have been addressed by [improvements vs. the BIP12 proposal](./alternatives.md#bip12-op_eval), others have been obviated by additional research and protocol upgrades in the intervening years.
 
-### Estimation of Contract Validation Performance
+### Estimation of Contract Validation Cost
 
-While the Bitcoin VM initially had few limits, following the [2010 emergency patches](https://github.com/bitjson/bch-bigint/blob/master/rationale.md#scenario-never-increase), it could be argued that the expected runtime of a contract was (in principle) a function of the contract's length, i.e. long contracts take longer to validate than short contracts.
+While the Bitcoin VM initially had few limits, following the [2010 emergency patches](https://github.com/bitjson/bch-loops/blob/master/alternatives.md#timeline-of-emergency-patches), it could be argued that the expected runtime of a contract was (in principle) a function of the contract's length, i.e. long contracts take longer to validate than short contracts.
 
-In practice, expensive operations (hashing and signature checking) have always dominated other operations by many orders of magnitude, but [some developers still considered](https://web.archive.org/web/20151210171935/https://github.com/bitcoin/bitcoin/issues/729#issuecomment-3283107) it a potentially useful feature that contracts could "in priciple" be "reviewed" prior to execution, limiting wasted computing resources vs. "fully evaluating" the contract.
+In practice, expensive operations (hashing and signature checking) have always dominated other operations by many orders of magnitude, but some developers [still](https://web.archive.org/web/20151210171935/https://github.com/bitcoin/bitcoin/issues/729) [considered](https://web.archive.org/web/20140416004759/https://bitcointalk.org/index.php?topic=58579.0;all) it potentially useful that contracts could "in principle" be somehow "reviewed" prior to execution, limiting wasted computing resources vs. "fully evaluating" the contract.
 
-As is now highlighted by more than a decade of non-adoption in node implementations and other software: such "review" would necessarily optimize for the uncommon case (an invalid transaction from a misbehaving peer) by penalizing performance in the common case (standard transactions) **leading to worse overall validation performance and network throughput – even if validation cost weren't dominated by the most expensive operations**.
+As is now highlighted by more than a decade of disuse in node implementations and other software: such "review" would necessarily optimize for the uncommon case (an invalid transaction from a misbehaving peer) by penalizing performance in the common case (standard transactions) **leading to worse overall validation performance and network throughput – even if validation cost weren't dominated by the most expensive operations**.
 
 The [2018 restoration of disabled opcodes](https://upgradespecs.bitcoincashnode.org/may-2018-reenabled-opcodes/) further reduced the plausibility of non-evaluated contract analysis by reenabling opcodes that could unpredictably branch or operate on hashes (`OP_SPLIT`, bitwise operations, etc.). For example, the pattern `OP_HASH256 OP_1 OP_SPLIT OP_DROP OP_0 OP_GREATERTHAN OP_IF OP_HASH256 ...` branches based on the result of a hash, obviating any further attempt to inspect without computing the hash. Note that simply "counting" `OP_HASH256` operations here also isn't meaningful: valid contracts can rely on many hashing operations (e.g. Merkle trees), and the more performance-relevant [digest iteration count](https://github.com/bitjson/bch-vm-limits/blob/55b9a446eef4932627d387c622ef0fce38ec9512/readme.md#digest-iteration-count) of any evaluation depends on the precise input lengths of hashed stack items; the existence of hash-based branching implies that such lengths cannot be predicted without a vulnerability in the hashing algorithm.
 

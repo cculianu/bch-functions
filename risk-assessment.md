@@ -41,9 +41,9 @@ This proposal is designed to preserve backwards-compatibility along a variety of
 
 #### Reduced or Equivalent Node Validation Costs
 
-By avoiding both the introduction of new data structures for function definitions and avoiding the addition of other new operations (`OP_EVAL` can only evaluate pre-existing operations), this proposal minimizes the risk of increase to worst-case validation performance, preventing any increase in node operation costs.
+This proposal does not increase an existing VM limits, minimizing the risk of increase to worst-case validation performance (preventing any increase in node operation costs).
 
-Critically, the addition of new control flow operations – like `OP_EVAL` – was accounted for in the development of [CHIP-2021-05 VM Limits](https://github.com/bitjson/bch-vm-limits). From [VM Limits Risk Assesement: Consideration of Possible Future Changes](https://github.com/bitjson/bch-vm-limits/blob/master/risk-assessment.md#consideration-of-possible-future-changes):
+Critically, the addition of new control flow operations – like `OP_DEFINE`/`OP_INVOKE` – was accounted for in the development of [CHIP-2021-05 VM Limits](https://github.com/bitjson/bch-vm-limits). From [VM Limits Risk Assesement: Consideration of Possible Future Changes](https://github.com/bitjson/bch-vm-limits/blob/master/risk-assessment.md#consideration-of-possible-future-changes):
 
 > - **Compatibility with additional control flow structures** – By limiting the density of pushed bytes and the density of evaluated operations, this proposal's re-targeted limits remain effective even if future upgrades significantly expand the VMs control flow capabilities: definite or indefinite loops, pushed bytecode evaluation, word/function definition and evaluation, or other structures. Further, the worst-case performance of contracts using such control flow structures can be safely decoupled from the contract length limit, allowing greater flexibility, e.g. loops which safely evaluate more instructions than would otherwise be possible to fit within contract length limits. See [Rationale: Retention of Control Stack Limit](https://github.com/bitjson/bch-vm-limits/blob/master/rationale.md#retention-of-control-stack-limit), [Rationale: Limitation of Pushed Bytes](https://github.com/bitjson/bch-vm-limits/blob/master/rationale.md#limitation-of-pushed-bytes), and [Rationale: Selection of Base Instruction Cost](https://github.com/bitjson/bch-vm-limits/blob/master/rationale.md#selection-of-base-instruction-cost).
 
@@ -51,7 +51,7 @@ Further, this risk mitigation strategy has been empirically verified across mult
 
 #### Increased or Equivalent Contract Capabilities
 
-Because this proposal adds the `OP_EVAL` operation without modifying the behavior of any other operations, existing contract systems, decentralized applications, pre-signed transactions, and transaction-settled protocols are not impacted. Upgrades are only required for applications wishing to take advantage of new privacy, auditability, or fee efficiency capabilities.
+Because this proposal adds the `OP_DEFINE` and `OP_INVOKE` operations without modifying the behavior of any other operations, existing contract systems, decentralized applications, pre-signed transactions, and transaction-settled protocols are not impacted. Upgrades are only required for applications wishing to take advantage of new privacy, auditability, or fee efficiency capabilities.
 
 ### Consensus Risks
 
@@ -67,7 +67,7 @@ In developing these test vectors, a workflow for test vector development has bee
 
 #### Additional Performance Benchmarks
 
-This proposal adds [additional performance benchmarks](./vmb_tests/) thoroughly covering `OP_EVAL` usage to help detect performance irregularities and regressions in specific node implementations and VM-evaluating software.
+This proposal adds [additional performance benchmarks](./vmb_tests/) thoroughly covering `OP_DEFINE`/`OP_INVOKE` usage to help detect performance irregularities and regressions in specific node implementations and VM-evaluating software.
 
 #### `Chipnet` Preview Activation
 
