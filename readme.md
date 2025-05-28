@@ -177,8 +177,8 @@ Please see the following implementations for examples and additional test vector
 
 ## Feedback & Reviews
 
-- [OP_EVAL CHIP Issues](https://github.com/bitjson/bch-eval/issues)
-- [`CHIP 2024-12 OP_EVAL: Function Evaluation` - Bitcoin Cash Research](https://bitcoincashresearch.org/t/chip-2024-12-op-eval-function-evaluation/1450)
+- [Functions CHIP Issues](https://github.com/bitjson/bch-functions/issues)
+- [`CHIP-2025-05 Functions: Function Definition and Invocation Operations` - Bitcoin Cash Research](https://bitcoincashresearch.org/t/chip-2025-05-functions-function-definition-and-invocation-operations/1576)
 
 ## Changelog
 
@@ -187,7 +187,7 @@ This section summarizes the evolution of this document.
 - **v2.0.0 – 2025-05-27**
   - Split `OP_EVAL` into `OP_DEFINE` and `OP_INVOKE`
 - **v1.0.1 – 2025-05-02**
-  - Clarify description ([#1](https://github.com/bitjson/bch-eval/pull/1))
+  - Clarify description ([#1](https://github.com/bitjson/bch-functions/pull/1))
   - Add [Rationale](./rationale.md)
   - Add [Evaluation of Alternatives](./alternatives.md)
   - Add [Risk Assessment](./risk-assessment.md)
