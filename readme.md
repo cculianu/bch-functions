@@ -6,7 +6,7 @@
         Maintainer: Jason Dreyzehner
         Status: Draft
         Initial Publication Date: 2024-12-12
-        Latest Revision Date: 2025-05-23
+        Latest Revision Date: 2025-05-27
         Version: 2.0.0
 
 ## Summary
@@ -36,7 +36,7 @@ The virtual machine is modified to add a [Function Table](#function-table) of im
 
 The virtual machine (VM) is modified to add a new data structure: the `Function Table` is a data structure (such as a map or sparse array) that holds immutable byte vectors; it maps each defined function identifier to an immutable function body (the byte vector).
 
-Due to VM limits, the function table does not exceed [Maximum Cumulative Depth](#maximum-cumulative-depth-max_cumulative_depth) in length/count, and the function table's held byte vectors do not exceed the the [Stack Element Length Limit](https://github.com/bitjson/bch-vm-limits?#increased-stack-element-length-limit).
+Due to VM limits, the function table does not exceed [Maximum Cumulative Depth](#maximum-cumulative-depth-max_cumulative_depth) in length/count, and the function table's held byte vectors do not exceed the [Stack Element Length Limit](https://github.com/bitjson/bch-vm-limits?#increased-stack-element-length-limit).
 
 #### Defined Function Count
 
@@ -54,9 +54,9 @@ The existing cumulative stack and altstack depth limit (A.K.A. `MAX_STACK_SIZE`;
 
 While unusual, it is possible to design pre-signed transactions, contract systems, and protocols which rely on the rejection of otherwise-valid transactions made invalid only by specifically exceeding one or more current VM limits. This proposal interprets such failure-reliant constructions as intentional – the constructions are designed to fail unless/until a possible future network upgrade in which such limits are increased, e.g. upgrade-activation futures contracts. Contract authors are advised that future upgrades may raise VM limits by increasing [Maximum Cumulative Depth](#maximum-cumulative-depth-max_cumulative_depth), or otherwise. See [Limits CHIP Rationale: Inclusion of "Notice of Possible Future Expansion"](https://github.com/bitjson/bch-vm-limits/blob/master/rationale.md#inclusion-of-notice-of-possible-future-expansion).
 
-#### Reset Before Locking Bytecode Evaluation
+#### Reset Before Each Bytecode Evaluation
 
-After the evaluation of unlocking bytecode and prior to the evaluation of locking bytecode, the [`Function Table`](#function-table) and [`Defined Function Count`](#defined-function-count) must be reset (to an empty table and `0`, respectively). Note that this reset 1) does not occur prior to Pay to Script Hash (P2SH) redeem bytecode evaluation and 2) non-push unlocking bytecode (including `OP_DEFINE`) is currently invalid, so implementations may choose to omit explicit enforcement of this behavior.
+Prior to each phase of evaluation (unlocking bytecode, locking bytecode, and redeem bytecode), the [`Function Table`](#function-table) and [`Defined Function Count`](#defined-function-count) must be reset to an empty table and `0`, respectively.
 
 ### `OP_DEFINE`
 
@@ -68,7 +68,7 @@ The `OP_DEFINE` opcode is defined at codepoint `0x89` (`137`) with the following
 
 1. Pop the top item from the stack to interpret as a function identifier (a VM Number between `0` and `999`, inclusive).<sup>1</sup>
 2. Pop the next item from the stack to interpret as the function body<sup>2</sup>, and copy it to the [function table](#function-table) at the index equal to the function identifier. If that function index is out of range or already defined, error.<sup>3</sup>
-3. Increment `Defined Function Count` by one, increment [Operation Cost](http://github.com/bitjson/bch-vm-limits#operation-cost-limit) by the length of the function body (in addition to the [Base Instruction Cost](https://github.com/bitjson/bch-vm-limits?#base-instruction-cost)).
+3. Increment `Defined Function Count` by one.<sup>4</sup>
 
 <small>
 
@@ -77,6 +77,7 @@ The `OP_DEFINE` opcode is defined at codepoint `0x89` (`137`) with the following
 1. If the stack is empty (no `function_identifier`), error. If the popped item is not a VM Number between `0` and `999` (inclusive), error. See [Rationale: Use of Stack-Based Parameters](./rationale.md#use-of-stack-based-parameters) and [Rationale: Use of Positive Integer-Based Function Identifiers](./rationale.md#use-of-positive-integer-based-function-identifiers).
 2. if the stack is empty (no `function_body`), error. Note that any stack item is a valid function body (including empty stack items); implementations must not attempt to parse the function body until invoked by `OP_INVOKE`. See [Rationale: Deferred Parsing of Function Bodies](./rationale.md#deferred-parsing-of-function-bodies).
 3. See [Rationale: Immutability of Function Bodies](./rationale.md#immutability-of-function-bodies). Note also that function identifiers/table indexes may be defined in any order. See [Rationale: Support for Skipping Function Identifiers](./rationale.md#support-for-skipping-function-identifiers).
+4. Note that the [Operation Cost](http://github.com/bitjson/bch-vm-limits#operation-cost-limit) of `OP_DEFINE` is equal to the [Base Instruction Cost](https://github.com/bitjson/bch-vm-limits?#base-instruction-cost).
 
 </small>
 
@@ -105,13 +106,14 @@ The `OP_INVOKE` opcode is defined at codepoint `0x8a` (`138`) with the following
    3. The `OP_ACTIVEBYTECODE` operation produces the serialization of the active bytecode beginning from the last executed code separator.
    4. In signature operations, the covered bytecode includes only the active bytecode beginning from the last executed code separator (or if none have been executed in the current evaluation, the full active bytecode).
 4. For an `OP_INVOKE` evaluation to complete successfully, the top element remaining on the control stack must be a stack frame to resume after the evaluation. (E.g. Validation fails if an `OP_IF` within the evaluation is not resolved by a matching `OP_ENDIF` within the same evaluation.)
-5. After an active bytecode has been fully evaluated, the next stack frame is resumed (restoring its bytecode, instruction pointer, and last executed code separator values) until all stack frames are complete (the control stack is empty) or the evaluation has produced some error. Note that two or more `OP_INVOKE` operations may be resolved within the same virtual machine step (e.g. if a child `OP_INVOKE` is the final instruction of a parent `OP_INVOKE` evaluation).
+5. After an active bytecode has been fully evaluated, the next stack frame is resumed (restoring its bytecode, instruction pointer, and last executed code separator values) until all stack frames are complete (the control stack is empty) or the evaluation has produced some error. Note that two or more `OP_INVOKE` operations may be resolved within the same virtual machine step (e.g. if a child `OP_INVOKE` is the final instruction of a parent `OP_INVOKE` evaluation). Note that the [Operation Cost](http://github.com/bitjson/bch-vm-limits#operation-cost-limit) of `OP_INVOKE` is equal to the [Base Instruction Cost](https://github.com/bitjson/bch-vm-limits?#base-instruction-cost).
 
 </small>
 
 ## Rationale
 
 - [Appendix: Rationale &rarr;](rationale.md#rationale)
+  - [Simple, Statically-Applicable Contract Length Optimizations](rationale.md#simple-statically-applicable-contract-length-optimizations)
   - [Immutability of Function Bodies](rationale.md#immutability-of-function-bodies)
   - [Deferred Parsing of Function Bodies](rationale.md#deferred-parsing-of-function-bodies)
   - [Use of Stack-Based Parameters](rationale.md#use-of-stack-based-parameters)
@@ -126,14 +128,15 @@ The `OP_INVOKE` opcode is defined at codepoint `0x8a` (`138`) with the following
 ## Evaluations of Alternatives
 
 - [Appendix: Evaluations of Alternatives &rarr;](alternatives.md#evaluation-of-alternatives)
+  - [Status Quo: Duplicated Logic](alternatives.md#status-quo-duplicated-logic)
   - [Status Quo: Sidecar Inputs ("Emulated `OP_EVAL`")](alternatives.md#status-quo-sidecar-inputs-emulated-op_eval)
     - [Improved Privacy and Operational Security vs. Status Quo](alternatives.md#improved-privacy-and-operational-security-vs-status-quo)
     - [Improved Efficiency and User Experience vs. Status Quo](alternatives.md#improved-efficiency-and-user-experience-vs-status-quo)
-    - [Notes](alternatives.md#notes)
-  - [BIP12 `OP_EVAL`](alternatives.md#bip12-op_eval)
-  - [Output-Level Function Annex](alternatives.md#output-level-function-annex)
-  - [Word Definition Operations (`OP_DEFINE` \& `OP_INVOKE`)](alternatives.md#word-definition-operations-op_define--op_invoke)
-  - [OP_EXEC](#op_exec)
+  - [Alternative: Multi-Byte `OP_DEFINE` and `OP_INVOKE` Opcodes](alternatives.md#alternative-multi-byte-op_define-and-op_invoke-opcodes)
+  - [Alternative: BIP12 `OP_EVAL`](alternatives.md#alternative-bip12-op_eval)
+  - [Alternative: CHIP 2024-12 OP_EVAL: Function Evaluation](alternatives.md#alternative-chip-2024-12-op_eval-function-evaluation)
+  - [Alternative: Output-Level Function Annex](alternatives.md#alternative-output-level-function-annex)
+  - [Alternative: OP_EXEC](alternatives.md#alternative-op_exec)
 
 ## Risk Assessment
 
@@ -181,7 +184,7 @@ Please see the following implementations for examples and additional test vector
 
 This section summarizes the evolution of this document.
 
-- **v2.0.0 – 2025-05-23**
+- **v2.0.0 – 2025-05-27**
   - Split `OP_EVAL` into `OP_DEFINE` and `OP_INVOKE`
 - **v1.0.1 – 2025-05-02**
   - Clarify description ([#1](https://github.com/bitjson/bch-eval/pull/1))

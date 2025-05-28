@@ -7,14 +7,16 @@ Potential alternatives to this proposal are reviewed below.
 <summary><strong>Table of Contents</strong></summary>
 
 - [Evaluation of Alternatives](#evaluation-of-alternatives)
+  - [Status Quo: Duplicated Logic](#status-quo-duplicated-logic)
   - [Status Quo: Sidecar Inputs ("Emulated `OP_EVAL`")](#status-quo-sidecar-inputs-emulated-op_eval)
     - [Improved Privacy and Operational Security vs. Status Quo](#improved-privacy-and-operational-security-vs-status-quo)
     - [Improved Efficiency and User Experience vs. Status Quo](#improved-efficiency-and-user-experience-vs-status-quo)
     - [Notes](#notes)
-  - [BIP12 `OP_EVAL`](#bip12-op_eval)
-  - [Output-Level Function Annex](#output-level-function-annex)
-  - [Word Definition Operations (`OP_DEFINE` \& `OP_INVOKE`)](#word-definition-operations-op_define--op_invoke)
-  - [OP_EXEC](#op_exec)
+  - [Alternative: Multi-Byte `OP_DEFINE` and `OP_INVOKE` Opcodes](#alternative-multi-byte-op_define-and-op_invoke-opcodes)
+  - [Alternative: BIP12 `OP_EVAL`](#alternative-bip12-op_eval)
+  - [Alternative: CHIP 2024-12 OP_EVAL: Function Evaluation](#alternative-chip-2024-12-op_eval-function-evaluation)
+  - [Alternative: Output-Level Function Annex](#alternative-output-level-function-annex)
+  - [Alternative: OP_EXEC](#alternative-op_exec)
 
 </details>
 
@@ -26,7 +28,7 @@ By eliminating duplicated bytecode, contract lengths can be optimized for a wide
 
 ### Status Quo: Sidecar Inputs ("Emulated `OP_EVAL`")
 
-The delegative capabilities offered by `OP_DEFINE`/`OP_INVOKE` have been available on Bitcoin Cash since the [2023 upgrade](https://cashtokens.org/docs/spec/chip), allowing contract systems to delegate authority to arbitrary, user-specified contracts via [identity tokens](https://cashtokens.org/docs/spec/examples#identity-tokens) provided in a "sidecar" input (A.K.A. "emulated `OP_EVAL`").
+The delegative capabilities offered by `OP_DEFINE`/`OP_INVOKE` have been available on Bitcoin Cash since the [2023 upgrade](https://cashtokens.org/docs/spec/chip), allowing contract systems to delegate authority to arbitrary, user-specified contracts via [identity tokens](https://cashtokens.org/docs/spec/examples#identity-tokens) provided in a sidecar input (A.K.A. "emulated `OP_EVAL`").
 
 For example, consider a simple upgradable vault: each UTXO may be spent if a previously-approved condition is revealed and satisfied – much like [Taproot](https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki), but without the limitation that conditions must be specified prior to UTXO creation. This configuration allows unused spending paths to remain hidden (via P2SH), improving privacy and/or operational security and reducing the byte length of some transactions<sup>1</sup>.
 
@@ -45,14 +47,12 @@ This proposal also reduces transaction sizes vs. the status quo, especially for 
 1. Note that identity tokens are also more powerful than Taproot or signature-based delegation in that identity tokens also enable **revocation** of previously-approved spending conditions. E.g. if an employee leaves a company, their keys may be revoked from thousands of different UTXOs without moving (or even revealing the redeem bytecode of) those UTXOs; instead, only the identity token must be moved to a new contract in which the revoked key is not a participant. (The new identity token contract can likewise delegate and/or hide unused spending conditions via sidecar inputs or `OP_DEFINE` + `OP_INVOKE`.)
 2. To prevent P2SH UTXOs within such vaults from being associated prior to spending (for privacy and/or operation security), a nonce may be included in the redeem bytecode (e.g. `<NONCE> OP_DROP`).
 3. If their redeem bytecode includes a nonce, unspent UTXOs in the same vault may still remain unassociated, hiding the "current balance" of the vault.
-4. The additional transaction input adds [a minimum of 41 bytes](https://github.com/bitjson/bch-vm-limits/blob/master/rationale.md#selection-of-input-length-formula). This proposal may enable additional efficiencies in specific cases, but for simplest comparison, we assume both strategies would authenticate the evaluated bytecode in the same way, e.g. comparison against a 32-byte hash, validation of a 65-byte signature, etc.
-5. The minimum byte length of the intermediate transaction.
-
-### Alternative: CHIP 2024-12 OP_EVAL: Function Evaluation
+4. The additional transaction input adds [a minimum of 41 bytes](https://github.com/bitjson/bch-vm-limits/blob/master/rationale.md#selection-of-input-length-formula). This proposal may enable additional efficiencies in specific cases, but to simplify comparison, we assume both strategies would authenticate the evaluated bytecode in the same way, e.g. comparison against a 32-byte hash, validation of a 65-byte signature, etc.
+5. The minimum byte length of the intermediate transaction (following `CHIP-2021-01 Minimum Transaction Size`).
 
 ### Alternative: Multi-Byte `OP_DEFINE` and `OP_INVOKE` Opcodes
 
-This proposal's `OP_DEFINE` and `OP_INVOKE` operations adopt the existing pattern of all other non-push operations – and the defined functions themselves – by accepting parameters from the stack. This approach maximizes the power and flexibility of each operation, simplifies transpilation from other languages to Bitcoin Cash VM bytecode, reduces contract lengths, and avoids a breaking modifications to bytecode parsing (which would require wider ecosystem software modifications beyond VM implementations). See Rationale: [Use of Stack-Based Parameters](./rationale.md#use-of-stack-based-parameters).
+This proposal's `OP_DEFINE` and `OP_INVOKE` operations adopt the existing pattern of all other non-push operations – and the defined functions themselves – by accepting parameters from the stack. This approach maximizes the power and flexibility of each operation, simplifies transpilation from other languages to Bitcoin Cash VM bytecode, reduces contract lengths, and avoids breaking modifications to bytecode parsing (which would require wider ecosystem software modifications beyond VM implementations). See Rationale: [Use of Stack-Based Parameters](./rationale.md#use-of-stack-based-parameters).
 
 ### Alternative: BIP12 `OP_EVAL`
 
@@ -73,29 +73,29 @@ This proposal's `OP_DEFINE` and `OP_INVOKE` operations adopt the existing patter
 
 Overall, this proposal benefits from many years of additional information, research, and clarification of constraints vs. BIP12, which had little visibility into yet-to-be-developed use cases, today's wider contract ecosystem, future introspection operations (especially `OP_ACTIVEBYTECODE`), [CashTokens](https://cashtokens.org/), or the [modern VM limits](https://github.com/bitjson/bch-vm-limits).
 
+### Alternative: CHIP 2024-12 OP_EVAL: Function Evaluation
+
+An earlier iteration of this proposal, `CHIP 2024-12 OP_EVAL`, enabled similar behavior via a single `OP_EVAL` opcode. The `OP_EVAL` approach enables an optimization saving up to 3 bytes per non-inlineable function given optimal stack scheduling. However, practical application of the optimization requires considerable implementation cost in ecosystem software, exposes optimized contracts to additional toolchain risks, and may ultimately have a zero-byte impact on transaction sizes. See [Withdrawing `OP_EVAL`](https://bitcoincashresearch.org/t/chip-2024-12-op-eval-function-evaluation/1450/91?u=bitjson).
+
 ### Alternative: Output-Level Function Annex
 
 Another potential (partial) alternative to this proposal is the addition of a per-output function annex, perhaps using a "`PREFIX_FUNCTIONS`" encoding and deployment strategy similar to the [token-encoding `PREFIX_TOKEN`](https://cashtokens.org/docs/spec/chip#token-prefix) codepoint, coupled with an "`OP_INVOKE`" operation (this could share the `PREFIX_FUNCTIONS` codepoint).
 
 Solutions in this category often have some combination of the following drawbacks:
 
-- **Disallow hiding of unused spending paths** – By forcing the contents of all function definitions to be exposed at spending time, this approach would limit the proposal's [privacy and operational security benefits](#improved-privacy-and-operational-security-vs-status-quo).
+- **Disallow hiding of unused spending paths** – If the solution forces the contents of unused function definitions to be exposed at spending time, the approach would limit the proposal's [privacy and operational security benefits](#improved-privacy-and-operational-security-vs-status-quo).
 
-- **Prevent some cross-input deduplication** – By forcing P2SH inputs to duplicate every function definition, this approach would prevent some contract systems from minimizing transaction sizes, e.g. by evaluating bytecode from a [sidecar input](#status-quo-sidecar-inputs-emulated-op_eval) (authenticated via a hash, signature, or token category and/or commitment).
+- **Prevent some cross-input deduplication** – If the solution forces P2SH inputs to specify function definitions within the same input, the approach would prevent some contract systems from minimizing transaction sizes, by e.g. evaluating bytecode contained by a [sidecar input](#status-quo-sidecar-inputs-emulated-op_eval) (authenticated via a hash, signature, or token category and/or commitment).
 
-- **Increase implementation complexity** – By requiring a new data structure and associated validation rules for specifying function code, this approach would increase the complexity of validating implementations. (What are the length and function count limits? Must all functions be called over the course of evaluation, or can functions be defined and never called? May functions call themselves recursively? Does all VM state carry into function calls? How do `OP_ACTIVEBYTECODE` or `OP_CODESEPARATOR` behave? Etc.)
+- **Increase implementation complexity** – If the solution requires a new transaction-level data structure and associated validation rules, the approach would increase the complexity of validating implementations. Increasingly specialized solutions in this category (e.g. [BIP341](https://github.com/bitcoin/bips/blob/master/bip-0341.mediawiki)) likewise tend to increase the risk of protocol-level technical debt.
 
-- **Increase some contract lengths** – By limiting the ability for transaction compilers to optimize function selection bytecode, this approach would increase the byte-length of contracts, especially for the last call of every function. In practice, this might add one additional byte per function call for contracts with more than 18 functions (assuming `OP_1NEGATE` and `OP_0`-`OP_16` are valid selectors), and one byte for the last call of some functions (e.g. `OP_7 OP_CALL` rather than a single `OP_EVAL`).
+Overall, this proposal considers `OP_DEFINE`/`OP_INVOKE` to be more capable and efficient in the long term – minimizing protocol debt.
 
-Overall, this proposal considers `OP_EVAL` to be more capable, efficient, and useful in the long term, minimizing protocol debt.
-
-### Alternative: Transaction-Level Function Annex
-
-### OP_EXEC
+### Alternative: OP_EXEC
 
 Another potential alternative to this proposal is [`OP_EXEC`](https://web.archive.org/web/20250117180758/https://www.nextchain.cash/op_exec.md), a variation on `OP_EVAL` which attempts to improve contract security by defining additional limitations around stack usage ("stack isolation") and recursion (to a depth of 3).
 
-The `OP_EXEC` proposal misunderstands the relevance of "stack isolation" to contract security<sup>1</sup>, has no known or theoretical advantages vs. `OP_EVAL`, and even if optimized to be less wasteful per-invocation, would significantly increase the byte length of all contracts vs. `OP_EVAL`<sup>2</sup>.
+The `OP_EXEC` proposal misunderstands the relevance of "stack isolation" to contract security<sup>1</sup>, has no known or theoretical advantages vs. `OP_EVAL`, and even if optimized to be less wasteful per-invocation, would 1) significantly increase the byte length of all contracts<sup>2</sup>, and 2) [share `OP_EVAL`'s other disadvantages vs. `OP_DEFINE`/`OP_INVOKE`](#alternative-chip-2024-12-op_eval-function-evaluation).
 
 <small>
 
