@@ -1,13 +1,20 @@
-# CHIP-2025-05 Functions: Function Definition and Invocation Operations
+# CHIP-2025-08.3 Functions Take 3: Function Definition and Invocation Operations, Take III
 
-        Title: Function Definition and Invocation Operations
+        Title: Function Definition and Invocation Operations, Take III
         Type: Standards
         Layer: Consensus
-        Maintainer: Jason Dreyzehner
+        Maintainers: Jason Dreyzehner, Calin Culianu, Bitcoin Cash Autist
         Status: Draft
         Initial Publication Date: 2024-12-12
-        Latest Revision Date: 2025-05-27
-        Version: 2.0.0
+        Latest Revision Date: 2025-08-11
+        Version: 2.3.0
+
+## Executive Summary
+
+This proposal is a fork of, and pretty much indentical to: [CHIP-2025-05 Functions: Function Definition and Invocation Operations](https://github.com/bitjson/bch-functions). The only difference is that this proposal adds an additional concept, [the stack data item executable bit](#stack-data-item-executable-bit), which restricts `OP_DEFINE`. In this proposal, `OP_DEFINE` is restricted to only be allowed to execute successfully when the data item it is given for the function body has its executable bit set to `1`. The rules governing this bit prohibit "code that writes code". A description of this bit and how it operarates [follows in the subsequent proposal below](#stack-data-item-executable-bit), which is more-or-less the same as the original proposal (with additions that describe the newly-introduced executable bit mechanism).  What follows is the amended original proposal:
+
+---
+
 
 ## Summary
 
@@ -50,6 +57,20 @@ A function identifier – the function's index in the [function table](#function
 
 The existing cumulative stack and altstack depth limit (A.K.A. `MAX_STACK_SIZE`; 1000 items) is modified to incorporate `Defined Function Count`: the sum of stack depth, alternate stack depth, and `Defined Function Count` must be less than `1000`.
 
+#### Stack Data Item Executable Bit 
+
+A new concept is introduced: the stack data item excutable bit. The intent behind this bit is to track the provenance of stack data items such that only immediately pushed data items or their copies can ever be used in conjunction with `OP_DEFINE`, and other data items that are the results of some computation (such as `OP_CAT`) cannot. This mechanism thus prevents "code that writes code" scenarios.
+
+- This bit is always set to `1` for data items resulting from a push opcode, which are the following opcodes:  `OP_0`, `OP_1` through `OP_16`, `OP_1NEGATE`, direct data push <= 75 bytes, `OP_PUSHDATA1`, `OP_PUSHDATA2`, or `OP_PUSHDATA4`
+- This bit is *inherited* when copying stack items around. So the bit is the same for the newly created copy as it was for the original for opcodes that *copy items*, which are the following opcodes: `OP_TOALTSTACK`, `OP_FROMALTSTACK`, `OP_2DUP`, `OP_3DUP`, `OP_2ROT`, `OP_2SWAP`, `OP_IFDUP`, `OP_DUP`, `OP_OVER`, `OP_PICK`, `OP_ROLL`, `OP_ROT`, `OP_SWAP`, `OP_TUCK`.
+- For all other opcodes (including introspection opcodes such as `OP_UTXOBYTECODE`), newly-created stack items that result from that opcode always have the executable bit set to `0`.
+
+This flag is checked when an `OP_DEFINE` is encountered by the virtual machine, and only stack data items that have the executable bit set to `1` may be added to the [function table](#function-table). If the data item given to `OP_DEFINE` has this bit set to `0`, then the evaluation fails.
+
+By preventing "code that writes code", it is intended that this mechanism will constrain scripts that make use of functions to be more easily amenable to static analysis.
+
+This executable bit mechanism (and thus the restriction on what types of data items can be given to `OP_DEFINE`) may be removed in a future Bitcoin Cash network upgrade in order to explicitly allow for "code that writes code".
+
 ##### Notice of Possible Future Expansion
 
 While unusual, it is possible to design pre-signed transactions, contract systems, and protocols which rely on the rejection of otherwise-valid transactions made invalid only by specifically exceeding one or more current VM limits. This proposal interprets such failure-reliant constructions as intentional – the constructions are designed to fail unless/until a possible future network upgrade in which such limits are increased, e.g. upgrade-activation futures contracts. Contract authors are advised that future upgrades may raise VM limits by increasing [Maximum Cumulative Depth](#maximum-cumulative-depth-max_cumulative_depth), or otherwise. See [Limits CHIP Rationale: Inclusion of "Notice of Possible Future Expansion"](https://github.com/bitjson/bch-vm-limits/blob/master/rationale.md#inclusion-of-notice-of-possible-future-expansion).
@@ -67,7 +88,7 @@ Prior to each phase of evaluation (unlocking bytecode, locking bytecode, and red
 The `OP_DEFINE` opcode is defined at codepoint `0x89` (`137`) with the following behavior:
 
 1. Pop the top item from the stack to interpret as a function identifier (a VM Number between `0` and `999`, inclusive).<sup>1</sup>
-2. Pop the next item from the stack to interpret as the function body<sup>2</sup>, and copy it to the [function table](#function-table) at the index equal to the function identifier. If that function index is out of range or already defined, error.<sup>3</sup>
+2. Pop the next item from the stack to interpret as the function body<sup>2</sup>. If the item has its [executable bit](#stack-data-item-executable-bit) set to `0`, then error, otherwise copy the item to the [function table](#function-table) at the index equal to the function identifier. If that function index is out of range or already defined, error.<sup>3</sup>
 3. Increment `Defined Function Count` by one.<sup>4</sup>
 
 <small>
@@ -184,6 +205,8 @@ Please see the following implementations for examples and additional test vector
 
 This section summarizes the evolution of this document.
 
+- **v2.3.0 - 2025-08-11**
+  - Added the executable bit concept to prevent "code that writes code".
 - **v2.0.0 – 2025-05-27**
   - Split `OP_EVAL` into `OP_DEFINE` and `OP_INVOKE`
 - **v1.0.1 – 2025-05-02**
