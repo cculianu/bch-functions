@@ -1,13 +1,20 @@
-# CHIP-2025-05 Functions: Function Definition and Invocation Operations
+# CHIP-2025-08 Functions Take 2: Function Definition and Invocation Operations, Take II
 
-        Title: Function Definition and Invocation Operations
+        Title: Function Definition and Invocation Operations, Take II
         Type: Standards
         Layer: Consensus
-        Maintainer: Jason Dreyzehner
+        Maintainers: Jason Dreyzehner, Calin Culianu
         Status: Draft
         Initial Publication Date: 2024-12-12
-        Latest Revision Date: 2025-05-27
-        Version: 2.0.0
+        Latest Revision Date: 2025-08-11
+        Version: 2.2.0
+
+## Executive Summary
+
+This proposal is a fork of, and pretty much indentical to: [CHIP-2025-05 Functions: Function Definition and Invocation Operations](https://github.com/bitjson/bch-functions). The only difference is that this proposal adds an additional flag `fCanDefineFunctions` which restricts `OP_DEFINE`. In this proposal, `OP_DEFINE` is restricted to only be allowed to execute when this flag is `true`. The rules governing this flag prohibit "code that writes code". A description of this flag and how it operarates [follows in the subsequent proposal below](#can-define-functions-flag-fcandefinefunctions), which is more-or-less the same as the original proposal (with additions that describe `fCanDefineFunctions` and how it restricts `OP_DEFINE`).  What follows is the amended original proposal:
+
+---
+
 
 ## Summary
 
@@ -50,13 +57,29 @@ A function identifier – the function's index in the [function table](#function
 
 The existing cumulative stack and altstack depth limit (A.K.A. `MAX_STACK_SIZE`; 1000 items) is modified to incorporate `Defined Function Count`: the sum of stack depth, alternate stack depth, and `Defined Function Count` must be less than `1000`.
 
+#### Can Define Functions Flag (`fCanDefineFunctions`)
+
+A flag is introduced, `fCanDefineFunctions`, which is initially set to `true` at the start of an evaluation.  It remains `true` so long as the code being executed is one of the following opcodes:
+
+- A data push opcode: `OP_0`, `OP_1` through `OP_16`, `OP_1NEGATE`, direct data push <= 75 bytes, `OP_PUSHDATA1`, `OP_PUSHDATA2`, or `OP_PUSHDATA4`
+- An `OP_DEFINE` opcode
+- A stack manipulation opcode in the following inclusive range: `OP_TOALTSTACK` (`0x6b`) through `OP_TUCK` (`0x7d`), **except** for `OP_DEPTH` (`0x74`)
+
+For any other opcode (such as `OP_CAT`, `OP_SPLIT`, `OP_ADD`, `OP_IF`, `OP_HASH160`, `OP_DEPTH`, etc), the flag gets latched to `false` for the remainder of the evaluation. If this flag is `false`, subsequent `OP_DEFINE` opcodes encountered in the script will fail the script immediately.
+
+The intent of this new flag is to prevent "code that writes code" situations. This flag forces scripts to essentially push all the code they intend to use as functions up-front, and disallows on-the-fly construction of stack data items intended to be used as code, such that all the code a script will execute as functions is immediately apparent and forced to exist "at the top" of the script bytecode, (more or less). In essence, this flag restricts precisely when and how `OP_DEFINE` can be used.
+
+It is intended that this flag, and thus the restriction it introduces, will constrain scripts that make use of functions to be more easily amenable to static analysis.
+
+This flag (and thus the restriction on how `OP_DEFINE` can be used) may be removed in a future Bitcoin Cash network upgrade in order to explicitly allow "code that writes code".
+
 ##### Notice of Possible Future Expansion
 
 While unusual, it is possible to design pre-signed transactions, contract systems, and protocols which rely on the rejection of otherwise-valid transactions made invalid only by specifically exceeding one or more current VM limits. This proposal interprets such failure-reliant constructions as intentional – the constructions are designed to fail unless/until a possible future network upgrade in which such limits are increased, e.g. upgrade-activation futures contracts. Contract authors are advised that future upgrades may raise VM limits by increasing [Maximum Cumulative Depth](#maximum-cumulative-depth-max_cumulative_depth), or otherwise. See [Limits CHIP Rationale: Inclusion of "Notice of Possible Future Expansion"](https://github.com/bitjson/bch-vm-limits/blob/master/rationale.md#inclusion-of-notice-of-possible-future-expansion).
 
 #### Reset Before Each Bytecode Evaluation
 
-Prior to each phase of evaluation (unlocking bytecode, locking bytecode, and redeem bytecode), the [`Function Table`](#function-table) and [`Defined Function Count`](#defined-function-count) must be reset to an empty table and `0`, respectively.
+Prior to each phase of evaluation (unlocking bytecode, locking bytecode, and redeem bytecode), the [`Function Table`](#function-table), [`Defined Function Count`](#defined-function-count), and [`fCanDefineFunctions` flag](#can-define-functions-flag-fcandefinefunctions) must be reset to an empty table, `0`, and `true` respectively.
 
 ### `OP_DEFINE`
 
@@ -66,9 +89,10 @@ Prior to each phase of evaluation (unlocking bytecode, locking bytecode, and red
 
 The `OP_DEFINE` opcode is defined at codepoint `0x89` (`137`) with the following behavior:
 
-1. Pop the top item from the stack to interpret as a function identifier (a VM Number between `0` and `999`, inclusive).<sup>1</sup>
-2. Pop the next item from the stack to interpret as the function body<sup>2</sup>, and copy it to the [function table](#function-table) at the index equal to the function identifier. If that function index is out of range or already defined, error.<sup>3</sup>
-3. Increment `Defined Function Count` by one.<sup>4</sup>
+1. If the [`fCanDefineFunctions`](#can-define-functions-flag-fcandefinefunctions) flag is `false`, fail execution immediately, otherwise:
+2. Pop the top item from the stack to interpret as a function identifier (a VM Number between `0` and `999`, inclusive).<sup>1</sup>
+3. Pop the next item from the stack to interpret as the function body<sup>2</sup>, and copy it to the [function table](#function-table) at the index equal to the function identifier. If that function index is out of range or already defined, error.<sup>3</sup>
+4. Increment `Defined Function Count` by one.<sup>4</sup>
 
 <small>
 
@@ -184,6 +208,8 @@ Please see the following implementations for examples and additional test vector
 
 This section summarizes the evolution of this document.
 
+- **v2.1.0 - 2025-08-11**
+  - Come up with the `fCanDefineFunctions` scheme to prohibit "code that writes code". 
 - **v2.0.0 – 2025-05-27**
   - Split `OP_EVAL` into `OP_DEFINE` and `OP_INVOKE`
 - **v1.0.1 – 2025-05-02**
